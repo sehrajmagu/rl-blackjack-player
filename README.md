@@ -25,9 +25,18 @@ Dealer bust probability by upcard:
 |---|---|---|---|---|---|---|---|---|---|---|
 | Bust % | 20.1 | 35.7 | 37.7 | 39.7 | 41.8 | 43.9 | 26.2 | 24.5 | 22.8 | 23.0 |
 
-## Running
+## Setup
+Requires Python 3.11. Create a virtual environment once, after cloning:
 ```bash
+python3.11 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python3 -m src.dealer   # print the dealer outcome table
-pytest                  # run tests
+```
+Run `source .venv/bin/activate` again in each new terminal. The `.venv/` folder is gitignored, so each of us makes our own.
+
+## Running
+With the venv active:
+```bash
+python -m src.dealer   # print the dealer outcome table
+pytest                 # run tests
 ```
