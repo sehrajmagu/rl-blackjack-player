@@ -1,6 +1,6 @@
 """Policy iteration that does NOT assume a stable policy exists.
 
-Run with:  python -m src.policy_iter.policy_iteration_non_stationary [--state TOTAL SOFT UPCARD] [--random N] [--verbose] [--actions]
+Run with:  python -m src.policy_iter.policy_iteration_non_stationary [--state TOTAL SOFT UPCARD] [--random N] [--verbose] [--actions] [--fundamental] [--table]
 
 What it does
   1. Starts from simple policies: HIT in every state (STAND where hitting is not
@@ -10,7 +10,10 @@ What it does
         - stopped changing      (fixed point), or
         - returned to a policy it already visited (cycle).
      Neither is assumed: the loop reports whichever actually happens.
-  3. Compares where the different starts end up and prints the best end point.
+  3. Compares where the different starts end up and prints the best end point,
+     with sweeps and runtime per start.
+  4. Optionally (--fundamental, --table) analyses the best policy as an absorbing
+     chain: fundamental matrix, expected steps, and win/tie/lose probabilities.
 
 Self-contained: only depends on the MDP definition (model.py, rules.py), not on
 any other policy_iter file.
@@ -22,6 +25,7 @@ for this MDP. The detector is there so that claim is checked, not assumed.
 
 import argparse
 import random
+import time
 
 import numpy as np
 
@@ -29,6 +33,7 @@ from ..model import GAMMA, HIT, STAND, STATES, TERMINAL, _describe, build_model
 from ..rules import CARD_PROBS
 
 ACTION_NAME = {STAND: "STAND", HIT: "HIT"}
+OUTCOMES = ("win", "tie", "lose")
 TOL = 1e-12
 IDX = {s: i for i, s in enumerate(STATES)}
 
@@ -157,9 +162,6 @@ def run_from(P, policy, trace_state, max_iters=50):
 # ----------------------------------------------------------------------------
 # Absorbing-chain analysis of a fixed policy
 # ----------------------------------------------------------------------------
-OUTCOMES = ("win", "tie", "lose")
-
-
 def fundamental_analysis(P, policy):
     """Absorbing-chain analysis of a fixed policy.
 
@@ -191,10 +193,10 @@ def fundamental_analysis(P, policy):
         outcomes[o] = {"prob": h, "steps": cond}
     return N, steps, outcomes
 
+
 # ----------------------------------------------------------------------------
 # Printing
 # ----------------------------------------------------------------------------
-
 def print_fundamental(policy, P, trace_state):
     N, steps, out = fundamental_analysis(P, policy)
     i = IDX[trace_state]
@@ -212,23 +214,14 @@ def print_fundamental(policy, P, trace_state):
             cond = float(w @ np.nan_to_num(out[o]["prob"] * out[o]["steps"])) / probs[o]
             print(f"  Fresh hand E[steps | {o}] = {cond:.4f}")
 
-def print_run(name, res, trace_state):
-    """Per-iteration detail (only shown with --verbose)."""
-    print(f"\n--- Start: {name} ---")
-    print(f"  {'iter':>4} {'changed':>8} {'#HIT':>5} {'E[return]':>11}")
-    for r in res["rows"]:
-        print(f"  {r['it']:>4} {r['changed']:>8} {r['hits']:>5} {r['ev']:>+11.6f}")
-    path = " -> ".join(ACTION_NAME[a] for a in res["traj"])
-    print(f"  {_describe(trace_state)}: {path}")
+    # uniform average over all game states
+    print(f"  All {len(STATES)} states (uniform): E[steps] = {steps.mean():.4f}")
+    for o in OUTCOMES:
+        p = out[o]["prob"].mean()
+        if p > 0:
+            c = np.nan_to_num(out[o]["prob"] * out[o]["steps"]).mean() / p
+            print(f"    {o:<4} P = {p:.4f}   E[steps | {o}] = {c:.4f}")
 
-
-def print_summary(results):
-    print(f"\n{'Start':<12} {'Iters':>5} {'#HIT':>5} {'E[return]':>11}  Result")
-    print("-" * 64)
-    for name, res in results:
-        hits = sum(a == HIT for a in res["policy"].values())
-        print(f"{name:<12} {len(res['rows']):>5} {hits:>5} "
-              f"{expected_return(res['V']):>+11.6f}  {res['status']}")
 
 def print_hard_table(P, policy, totals=range(16, 22)):
     _, steps, out = fundamental_analysis(P, policy)
@@ -245,6 +238,34 @@ def print_hard_table(P, policy, totals=range(16, 22)):
             print(f"  hard {t:>2} v{'A' if u == 1 else u:>2} {ACTION_NAME[policy[s]]:<5} "
                   f"{steps[i]:>8.4f} {probs}  {conds}")
         print()
+
+    # average over hard 16-21, weighted by how often each hand is dealt
+    w = np.array([START.get(s, 0.0) if (s[0] >= 16 and not s[1]) else 0.0 for s in STATES])
+    if w.sum() > 0:
+        w = w / w.sum()
+        print(f"  Average over hard 16-21 (weighted by deal frequency): "
+              f"E[steps] = {w @ steps:.4f}, "
+              + ", ".join(f"P({o}) = {w @ out[o]['prob']:.4f}" for o in OUTCOMES))
+
+
+def print_run(name, res, trace_state):
+    """Per-iteration detail (only shown with --verbose)."""
+    print(f"\n--- Start: {name} ---")
+    print(f"  {'iter':>4} {'changed':>8} {'#HIT':>5} {'E[return]':>11}")
+    for r in res["rows"]:
+        print(f"  {r['it']:>4} {r['changed']:>8} {r['hits']:>5} {r['ev']:>+11.6f}")
+    path = " -> ".join(ACTION_NAME[a] for a in res["traj"])
+    print(f"  {_describe(trace_state)}: {path}")
+
+
+def print_summary(results):
+    print(f"\n{'Start':<12} {'Sweeps':>6} {'#HIT':>5} {'E[return]':>11} {'Time(s)':>9}  Result")
+    print("-" * 76)
+    for name, res in results:
+        hits = sum(a == HIT for a in res["policy"].values())
+        print(f"{name:<12} {len(res['rows']):>6} {hits:>5} "
+              f"{expected_return(res['V']):>+11.6f} {res['time']:>9.4f}  {res['status']}")
+    print(f"\nTotal runtime: {sum(r['time'] for _, r in results):.4f}s")
 
 
 def print_grid(policy):
@@ -273,7 +294,7 @@ def main():
     ap.add_argument("--actions", action="store_true", help="print the full list of actions")
     ap.add_argument("--table", action="store_true", help="per-state table for hard 16-21")
     ap.add_argument("--fundamental", action="store_true",
-                help="print absorbing-chain analysis (win/tie/lose probabilities and steps)")
+                    help="print absorbing-chain analysis (win/tie/lose probabilities and steps)")
     args = ap.parse_args()
 
     trace = (int(args.state[0]), bool(int(args.state[1])), int(args.state[2]))
@@ -286,7 +307,9 @@ def main():
 
     results = []
     for name, pol in starts:
+        t0 = time.perf_counter()
         res = run_from(P, pol, trace)
+        res["time"] = time.perf_counter() - t0
         if args.verbose:
             print_run(name, res, trace)
         results.append((name, res))
@@ -310,17 +333,17 @@ def main():
     print(f"Tracked state {_describe(trace)}: {ACTION_NAME[best['policy'][trace]]}")
 
     print_grid(best["policy"])
-    print_fundamental(best["policy"], P, trace)
-
-    if args.actions:
-        print("\nList of actions ((total, soft, upcard) -> action):")
-        print([(s, ACTION_NAME[best["policy"][s]]) for s in STATES])
 
     if args.fundamental:
         print_fundamental(best["policy"], P, trace)
 
     if args.table:
         print_hard_table(P, best["policy"])
+
+    if args.actions:
+        print("\nList of actions ((total, soft, upcard) -> action):")
+        print([(s, ACTION_NAME[best["policy"][s]]) for s in STATES])
+
 
 if __name__ == "__main__":
     main()
