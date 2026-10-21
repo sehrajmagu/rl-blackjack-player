@@ -124,31 +124,34 @@ def expected_return(V):
 # One run: iterate until fixed point / cycle / max_iters
 # ----------------------------------------------------------------------------
 def run_from(P, policy, trace_state, max_iters=50):
+    """Iterate evaluate -> improve until a fixed point, a cycle, or max_iters."""
     seen = {_key(policy): 0}
-    rows = []  # one row per iteration
-    traj = [policy[trace_state]]
+    rows, traj = [], [policy[trace_state]]
+    status, fixed = f"no fixed point within {max_iters} iterations", False
+
     for it in range(1, max_iters + 1):
         V = evaluate_policy(P, policy)
-        new, changed = improve_policy(P, V, policy)
+        new, _ = improve_policy(P, V, policy)
         n_changed = sum(new[s] != policy[s] for s in STATES)
-        rows.append({
-            "it": it,
-            "changed": n_changed,
-            "hits": sum(a == HIT for a in policy.values()),
-            "ev": expected_return(V),
-        })
-        if not changed:  # policy used for V is already greedy w.r.t. V
-            return {"status": f"fixed point after {it - 1} policy update(s)", "policy": policy,
-                    "V": V, "rows": rows, "traj": traj}
+        rows.append({"it": it, "changed": n_changed,
+                     "hits": sum(a == HIT for a in policy.values()),
+                     "ev": expected_return(V)})
+
+        if n_changed == 0:  # policy is already greedy w.r.t. its own V
+            status, fixed = f"fixed point after {it - 1} policy update(s)", True
+            break
+
         policy = new
         traj.append(policy[trace_state])
         k = _key(policy)
         if k in seen:
-            return {"status": f"CYCLE of length {it - seen[k]} (back to policy #{seen[k]})",
-                    "policy": policy, "V": evaluate_policy(P, policy), "rows": rows, "traj": traj}
+            status = f"CYCLE of length {it - seen[k]} (back to policy #{seen[k]})"
+            break
         seen[k] = it
-    return {"status": f"no fixed point within {max_iters} iterations", "policy": policy,
-            "V": evaluate_policy(P, policy), "rows": rows, "traj": traj}
+
+    if not fixed:  # V is stale: it belongs to the previous policy
+        V = evaluate_policy(P, policy)
+    return {"status": status, "policy": policy, "V": V, "rows": rows, "traj": traj}
 
 
 # ----------------------------------------------------------------------------
