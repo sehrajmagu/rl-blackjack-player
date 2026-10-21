@@ -155,8 +155,63 @@ def run_from(P, policy, trace_state, max_iters=50):
 
 
 # ----------------------------------------------------------------------------
+# Absorbing-chain analysis of a fixed policy
+# ----------------------------------------------------------------------------
+OUTCOMES = ("win", "tie", "lose")
+
+
+def fundamental_analysis(P, policy):
+    """Absorbing-chain analysis of a fixed policy.
+
+    Returns (N, steps, outcomes), all indexed by IDX (row i = STATES[i]):
+      N[i, j]  expected visits to game state j starting from i
+      steps[i] expected number of actions until the hand ends
+      outcomes[o]["prob"][i]   P(hand ends as o), o in OUTCOMES
+      outcomes[o]["steps"][i]  E[steps | hand ends as o]  (nan if P(o) = 0)
+    """
+    n = len(STATES)
+    Q = np.zeros((n, n))
+    R = {o: np.zeros(n) for o in OUTCOMES}  # P(i -> TERMINAL with outcome o)
+    for s in STATES:
+        i = IDX[s]
+        for p, nxt, reward in P[s][policy[s]]:
+            if nxt == TERMINAL:
+                R["win" if reward > 0 else "lose" if reward < 0 else "tie"][i] += p
+            else:
+                Q[i, IDX[nxt]] += p
+
+    N = np.linalg.inv(np.eye(n) - Q)  # fundamental matrix (undiscounted)
+    steps = N.sum(axis=1)             # t = N 1
+
+    outcomes = {}
+    for o, r in R.items():
+        h = N @ r                     # P(absorbed with outcome o)
+        g = N @ h                     # E[steps * 1{outcome o}]
+        cond = np.divide(g, h, out=np.full(n, np.nan), where=h > 1e-15)
+        outcomes[o] = {"prob": h, "steps": cond}
+    return N, steps, outcomes
+
+# ----------------------------------------------------------------------------
 # Printing
 # ----------------------------------------------------------------------------
+
+def print_fundamental(policy, P, trace_state):
+    N, steps, out = fundamental_analysis(P, policy)
+    i = IDX[trace_state]
+    print(f"\nFundamental matrix analysis (undiscounted), {_describe(trace_state)}:")
+    print(f"  E[steps to finish] = {steps[i]:.4f}")
+    for o in OUTCOMES:
+        print(f"  {o:<4} P = {out[o]['prob'][i]:.4f}   E[steps | {o}] = {out[o]['steps'][i]:.4f}")
+
+    # averaged over a freshly dealt hand
+    w = np.array([START.get(s, 0.0) for s in STATES])
+    probs = {o: float(w @ out[o]["prob"]) for o in OUTCOMES}
+    print("  Fresh hand: " + ", ".join(f"P({o}) = {p:.4f}" for o, p in probs.items()))
+    for o in OUTCOMES:
+        if probs[o] > 0:
+            cond = float(w @ np.nan_to_num(out[o]["prob"] * out[o]["steps"])) / probs[o]
+            print(f"  Fresh hand E[steps | {o}] = {cond:.4f}")
+
 def print_run(name, res, trace_state):
     """Per-iteration detail (only shown with --verbose)."""
     print(f"\n--- Start: {name} ---")
@@ -236,6 +291,7 @@ def main():
     print(f"Tracked state {_describe(trace)}: {ACTION_NAME[best['policy'][trace]]}")
 
     print_grid(best["policy"])
+    print_fundamental(best["policy"], P, trace)
 
     if args.actions:
         print("\nList of actions ((total, soft, upcard) -> action):")
