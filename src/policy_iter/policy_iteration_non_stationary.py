@@ -230,6 +230,22 @@ def print_summary(results):
         print(f"{name:<12} {len(res['rows']):>5} {hits:>5} "
               f"{expected_return(res['V']):>+11.6f}  {res['status']}")
 
+def print_hard_table(P, policy, totals=range(16, 22)):
+    _, steps, out = fundamental_analysis(P, policy)
+    print("\nHard totals 16-21: same statistics per state (undiscounted)")
+    print(f"  {'state':<10} {'act':<5} {'E[steps]':>8} "
+          + " ".join(f"{'P(' + o + ')':>8}" for o in OUTCOMES) + "  "
+          + " ".join(f"{'E[s|' + o + ']':>9}" for o in OUTCOMES))
+    for t in totals:
+        for u in range(1, 11):
+            s = (t, False, u)
+            i = IDX[s]
+            probs = " ".join(f"{out[o]['prob'][i]:>8.4f}" for o in OUTCOMES)
+            conds = " ".join(f"{out[o]['steps'][i]:>9.4f}" for o in OUTCOMES)
+            print(f"  hard {t:>2} v{'A' if u == 1 else u:>2} {ACTION_NAME[policy[s]]:<5} "
+                  f"{steps[i]:>8.4f} {probs}  {conds}")
+        print()
+
 
 def print_grid(policy):
     ups = range(1, 11)
@@ -255,6 +271,9 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--verbose", action="store_true", help="show every iteration of every run")
     ap.add_argument("--actions", action="store_true", help="print the full list of actions")
+    ap.add_argument("--table", action="store_true", help="per-state table for hard 16-21")
+    ap.add_argument("--fundamental", action="store_true",
+                help="print absorbing-chain analysis (win/tie/lose probabilities and steps)")
     args = ap.parse_args()
 
     trace = (int(args.state[0]), bool(int(args.state[1])), int(args.state[2]))
@@ -297,6 +316,11 @@ def main():
         print("\nList of actions ((total, soft, upcard) -> action):")
         print([(s, ACTION_NAME[best["policy"][s]]) for s in STATES])
 
+    if args.fundamental:
+        print_fundamental(best["policy"], P, trace)
+
+    if args.table:
+        print_hard_table(P, best["policy"])
 
 if __name__ == "__main__":
     main()
