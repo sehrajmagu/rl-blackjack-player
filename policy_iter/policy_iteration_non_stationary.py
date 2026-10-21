@@ -106,37 +106,50 @@ def run_from(P, policy, trace_state, max_iters=50):
 # Printing
 # ----------------------------------------------------------------------------
 def print_run(name, res, trace_state):
-    print(f"\n=== Start: {name} ===")
-    print("  it  changed  #HIT  E[return of a dealt hand]")
+    """Per-iteration detail (only shown with --verbose)."""
+    print(f"\n--- Start: {name} ---")
+    print(f"  {'iter':>4} {'changed':>8} {'#HIT':>5} {'E[return]':>11}")
     for r in res["rows"]:
-        print(f"  {r['it']:2d}  {r['changed']:7d}  {r['hits']:4d}  {r['ev']:+.6f}")
+        print(f"  {r['it']:>4} {r['changed']:>8} {r['hits']:>5} {r['ev']:>+11.6f}")
     path = " -> ".join(ACTION_NAME[a] for a in res["traj"])
     print(f"  {_describe(trace_state)}: {path}")
-    print(f"  result: {res['status']}")
+
+
+def print_summary(results):
+    print(f"\n{'Start':<12} {'Iters':>5} {'#HIT':>5} {'E[return]':>11}  Result")
+    print("-" * 64)
+    for name, res in results:
+        hits = sum(a == HIT for a in res["policy"].values())
+        print(f"{name:<12} {len(res['rows']):>5} {hits:>5} "
+              f"{expected_return(res['V']):>+11.6f}  {res['status']}")
 
 
 def print_grid(policy):
-    ups = list(range(1, 11))
-    header = "        " + " ".join(f"{'A' if u == 1 else u:>2}" for u in ups)
+    ups = range(1, 11)
+    header = "         " + " ".join(f"{'A' if u == 1 else u:>2}" for u in ups)
 
-    def cell(s):
-        return "H" if policy[s] == HIT else "S"
+    def block(title, soft, totals):
+        print(f"\n{title}   (columns = dealer upcard)\n{header}")
+        for t in totals:
+            cells = " ".join(f"{'H' if policy[(t, soft, u)] == HIT else '.':>2}" for u in ups)
+            print(f"  {'soft' if soft else 'hard'} {t:>2}  {cells}")
 
-    print("\nHard totals\n" + header)
-    for t in range(4, 22):
-        print(f"  hard {t:2d} " + " ".join(f"{cell((t, False, u)):>2}" for u in ups))
-    print("\nSoft totals\n" + header)
-    for t in range(12, 22):
-        print(f"  soft {t:2d} " + " ".join(f"{cell((t, True, u)):>2}" for u in ups))
+    block("HARD TOTALS", False, range(4, 22))
+    block("SOFT TOTALS", True, range(12, 22))
+    print("\n  H = hit, . = stand")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--state", nargs=3, metavar=("TOTAL", "SOFT(0/1)", "UPCARD"),
-                    default=["16", "0", "10"], help="state whose action is tracked (default: hard 16 vs 10)")
+                    default=["16", "0", "10"],
+                    help="state whose action is tracked (default: hard 16 vs 10)")
     ap.add_argument("--random", type=int, default=0, help="extra random starting policies")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--verbose", action="store_true", help="show every iteration of every run")
+    ap.add_argument("--actions", action="store_true", help="print the full list of actions")
     args = ap.parse_args()
+
     trace = (int(args.state[0]), bool(int(args.state[1])), int(args.state[2]))
     assert trace in STATES, f"{trace} is not a valid state"
 
@@ -148,29 +161,33 @@ def main():
     results = []
     for name, pol in starts:
         res = run_from(P, pol, trace)
-        print_run(name, res, trace)
+        if args.verbose:
+            print_run(name, res, trace)
         results.append((name, res))
+
+    print_summary(results)
 
     # Where did the different starts end up?
     ref_name, ref = results[0]
-    print("\n=== Comparison of end points ===")
+    print(f"\nEnd points compared with '{ref_name}':")
     for name, res in results[1:]:
         diff = [s for s in STATES if res["policy"][s] != ref["policy"][s]]
-        print(f"  {name} vs {ref_name}: {len(diff)} state(s) differ", end="")
         if diff:
-            print(" -> " + ", ".join(_describe(s) for s in diff[:10]))
+            shown = ", ".join(_describe(s) for s in diff[:5])
+            more = f" (+{len(diff) - 5} more)" if len(diff) > 5 else ""
+            print(f"  {name:<12} {len(diff)} state(s) differ: {shown}{more}")
         else:
-            print(" (identical policy)")
+            print(f"  {name:<12} identical policy")
 
     best_name, best = max(results, key=lambda kv: expected_return(kv[1]["V"]))
-    policy = best["policy"]
-    print(f"\nBest end point: start '{best_name}', E[return] = {expected_return(best['V']):+.6f}")
+    print(f"\nBest end point: '{best_name}', E[return] = {expected_return(best['V']):+.6f}")
+    print(f"Tracked state {_describe(trace)}: {ACTION_NAME[best['policy'][trace]]}")
 
-    print("\nFinal policy   H = hit, S = stand")
-    print_grid(policy)
+    print_grid(best["policy"])
 
-    print("\nList of actions ((total, soft, upcard) -> action):")
-    print([(s, ACTION_NAME[policy[s]]) for s in STATES])
+    if args.actions:
+        print("\nList of actions ((total, soft, upcard) -> action):")
+        print([(s, ACTION_NAME[best["policy"][s]]) for s in STATES])
 
 
 if __name__ == "__main__":
