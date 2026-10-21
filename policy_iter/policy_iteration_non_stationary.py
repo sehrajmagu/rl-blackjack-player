@@ -22,8 +22,7 @@ import random
 
 from ..model import HIT, STAND, STATES, _describe, build_model
 from ..rules import CARD_PROBS
-from .policy_iteration import ACTION_NAME, evaluate_policy, improve_policy
-
+from .policy_iteration_stationary import ACTION_NAME, evaluate_policy, improve_policy
 
 # ----------------------------------------------------------------------------
 # Starting policies
